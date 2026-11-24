@@ -214,6 +214,20 @@ describe('denoCodeSandbox permission boundary', () => {
                 return new TextDecoder().decode(out.stdout)
             }`), PERMISSION_DENIED)
         })
+        
+        it('rejects spawning a subprocess through the Node child_process compatibility API', async () => {
+            await expectRejection(runModule(`const cp = require('node:child_process')
+export const code = async () => {
+    const result = cp.spawnSync('id', [], { encoding: 'utf8' })
+    return result.stdout
+}`), PERMISSION_DENIED)
+        })
+
+        it('rejects reading files outside the step directory through the Node fs compatibility API', async () => {
+            await expectRejection(runModule(`const fs = require('node:fs')
+export const code = async () => fs.readFileSync('/etc/passwd', 'utf8')
+`), PERMISSION_DENIED)
+        })
 
         it('rejects writing outside the step directory', async () => {
             await expectRejection(runModule(`export const code = async () => Deno.writeTextFile('/tmp/ap-pwned.txt', 'hi')`), PERMISSION_DENIED)
