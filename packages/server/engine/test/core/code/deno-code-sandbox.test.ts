@@ -236,17 +236,38 @@ export const code = async () => fs.readFileSync('/etc/passwd', 'utf8')
             }`), PERMISSION_DENIED)
         })
 
-        it('does not expose a permission-bypassing process.binding filesystem API', async () => {
+        it('does not expose callable raw filesystem methods through Node process bindings', async () => {
             const result = await runModule(`export const code = async () => {
+                const describe = (binding) => ({
+                    keys: Reflect.ownKeys(binding).map(String),
+                    open: typeof binding.open,
+                    openFileHandle: typeof binding.openFileHandle,
+                    read: typeof binding.read,
+                    readFile: typeof binding.readFile,
+                    readSync: typeof binding.readSync,
+                    stat: typeof binding.stat,
+                    unlink: typeof binding.unlink,
+                })
+                let linked
                 try {
-                    const binding = process.binding('fs')
-                    return { available: true, keys: Object.keys(binding).slice(0, 20) }
+                    linked = describe(process._linkedBinding('fs'))
                 }
                 catch (error) {
-                    return { available: false, error: String(error) }
+                    linked = { error: String(error) }
                 }
+                let ordinary
+                try {
+                    ordinary = describe(process.binding('fs'))
+                }
+                catch (error) {
+                    ordinary = { error: String(error) }
+                }
+                return { linked, ordinary }
             }`)
-            expect(result).toMatchObject({ available: false })
+            for (const binding of [result.linked, result.ordinary]) {
+                if ('error' in binding) continue
+                expect(Object.values(binding).filter(value => value === 'function')).toEqual([])
+            }
         })
 
         it('rejects writing outside the step directory', async () => {
