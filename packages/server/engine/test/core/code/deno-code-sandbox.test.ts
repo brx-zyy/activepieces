@@ -292,6 +292,15 @@ export const code = async () => fs.readFileSync('/etc/passwd', 'utf8')
                 expect(result[name].linked.functionValues ?? []).toEqual([])
             }
         })
+        it('requires FFI permission for Node native addon loading', async () => {
+            await expectRejection(runModule(`const Module = require('node:module')
+export const code = async () => {
+    const target = new Module('ffi-probe')
+    process.dlopen(target, '/lib/x86_64-linux-gnu/libc.so.6')
+    return 'loaded'
+}`), /NotCapable|PermissionDenied|ffi|FFI/i)
+        })
+
         it('rejects writing outside the step directory', async () => {
             await expectRejection(runModule(`export const code = async () => Deno.writeTextFile('/tmp/ap-pwned.txt', 'hi')`), PERMISSION_DENIED)
         })
