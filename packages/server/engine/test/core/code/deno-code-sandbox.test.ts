@@ -229,6 +229,26 @@ export const code = async () => fs.readFileSync('/etc/passwd', 'utf8')
 `), PERMISSION_DENIED)
         })
 
+        it('rejects filesystem access through process.getBuiltinModule', async () => {
+            await expectRejection(runModule(`export const code = async () => {
+                const fs = process.getBuiltinModule('node:fs')
+                return fs.readFileSync('/etc/passwd', 'utf8')
+            }`), PERMISSION_DENIED)
+        })
+
+        it('does not expose a permission-bypassing process.binding filesystem API', async () => {
+            const result = await runModule(`export const code = async () => {
+                try {
+                    const binding = process.binding('fs')
+                    return { available: true, keys: Object.keys(binding).slice(0, 20) }
+                }
+                catch (error) {
+                    return { available: false, error: String(error) }
+                }
+            }`)
+            expect(result).toMatchObject({ available: false })
+        })
+
         it('rejects writing outside the step directory', async () => {
             await expectRejection(runModule(`export const code = async () => Deno.writeTextFile('/tmp/ap-pwned.txt', 'hi')`), PERMISSION_DENIED)
         })
