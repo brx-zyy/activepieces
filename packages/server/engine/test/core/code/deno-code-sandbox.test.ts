@@ -214,6 +214,92 @@ describe('denoCodeSandbox permission boundary', () => {
                 return new TextDecoder().decode(out.stdout)
             }`), PERMISSION_DENIED)
         })
+        
+        it('rejects spawning a subprocess through the Node child_process compatibility API', async () => {
+            await expectRejection(runModule(`const cp = require('node:child_process')
+export const code = async () => {
+    const result = cp.spawnSync('id', [], { encoding: 'utf8' })
+    return result.stdout
+}`), PERMISSION_DENIED)
+        })
+
+        it('rejects reading files outside the step directory through the Node fs compatibility API', async () => {
+            await expectRejection(runModule(`const fs = require('node:fs')
+export const code = async () => fs.readFileSync('/etc/passwd', 'utf8')
+`), PERMISSION_DENIED)
+        })
+
+        it('rejects filesystem access through process.getBuiltinModule', async () => {
+            await expectRejection(runModule(`export const code = async () => {
+                const fs = process.getBuiltinModule('node:fs')
+                return fs.readFileSync('/etc/passwd', 'utf8')
+            }`), PERMISSION_DENIED)
+        })
+
+        it('does not expose callable raw filesystem methods through Node process bindings', async () => {
+            const result = await runModule(`export const code = async () => {
+                const describe = (binding) => ({
+                    keys: Reflect.ownKeys(binding).map(String),
+                    open: typeof binding.open,
+                    openFileHandle: typeof binding.openFileHandle,
+                    read: typeof binding.read,
+                    readFile: typeof binding.readFile,
+                    readSync: typeof binding.readSync,
+                    stat: typeof binding.stat,
+                    unlink: typeof binding.unlink,
+                })
+                let linked
+                try {
+                    linked = describe(process._linkedBinding('fs'))
+                }
+                catch (error) {
+                    linked = { error: String(error) }
+                }
+                let ordinary
+                try {
+                    ordinary = describe(process.binding('fs'))
+                }
+                catch (error) {
+                    ordinary = { error: String(error) }
+                }
+                return { linked, ordinary }
+            }`)
+            for (const binding of [result.linked, result.ordinary]) {
+                if ('error' in binding) continue
+                expect(Object.values(binding).filter(value => value === 'function')).toEqual([])
+            }
+        })
+
+        it('does not expose raw Node native bindings for process, networking, or filesystem operations', async () => {
+            const result = await runModule(`export const code = async () => {
+                const names = ['fs', 'spawn_sync', 'uv', 'tcp_wrap', 'pipe_wrap', 'process_wrap', 'cares_wrap']
+                const inspectBinding = (loader, name) => {
+                    try {
+                        const binding = loader(name)
+                        return { keys: Reflect.ownKeys(binding).map(String), functionValues: Reflect.ownKeys(binding).filter(key => typeof binding[key] === 'function').map(String) }
+                    }
+                    catch (error) {
+                        return { error: String(error) }
+                    }
+                }
+                return Object.fromEntries(names.map(name => [name, {
+                    binding: inspectBinding(process.binding.bind(process), name),
+                    linked: inspectBinding(process._linkedBinding.bind(process), name),
+                }]))
+            }`)
+            for (const name of ['spawn_sync', 'tcp_wrap', 'pipe_wrap', 'process_wrap']) {
+                expect(result[name].binding.functionValues ?? []).toEqual([])
+                expect(result[name].linked.functionValues ?? []).toEqual([])
+            }
+        })
+        it('requires FFI permission for Node native addon loading', async () => {
+            await expectRejection(runModule(`const Module = require('node:module')
+export const code = async () => {
+    const target = new Module('ffi-probe')
+    process.dlopen(target, '/lib/x86_64-linux-gnu/libc.so.6')
+    return 'loaded'
+}`), /NotCapable|PermissionDenied|ffi|FFI/i)
+        })
 
         it('rejects writing outside the step directory', async () => {
             await expectRejection(runModule(`export const code = async () => Deno.writeTextFile('/tmp/ap-pwned.txt', 'hi')`), PERMISSION_DENIED)
