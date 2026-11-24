@@ -270,6 +270,28 @@ export const code = async () => fs.readFileSync('/etc/passwd', 'utf8')
             }
         })
 
+        it('does not expose raw Node native bindings for process, networking, or filesystem operations', async () => {
+            const result = await runModule(`export const code = async () => {
+                const names = ['fs', 'spawn_sync', 'uv', 'tcp_wrap', 'pipe_wrap', 'process_wrap', 'cares_wrap']
+                const inspectBinding = (loader, name) => {
+                    try {
+                        const binding = loader(name)
+                        return { keys: Reflect.ownKeys(binding).map(String), functionValues: Reflect.ownKeys(binding).filter(key => typeof binding[key] === 'function').map(String) }
+                    }
+                    catch (error) {
+                        return { error: String(error) }
+                    }
+                }
+                return Object.fromEntries(names.map(name => [name, {
+                    binding: inspectBinding(process.binding.bind(process), name),
+                    linked: inspectBinding(process._linkedBinding.bind(process), name),
+                }]))
+            }`)
+            for (const name of ['spawn_sync', 'tcp_wrap', 'pipe_wrap', 'process_wrap']) {
+                expect(result[name].binding.functionValues ?? []).toEqual([])
+                expect(result[name].linked.functionValues ?? []).toEqual([])
+            }
+        })
         it('rejects writing outside the step directory', async () => {
             await expectRejection(runModule(`export const code = async () => Deno.writeTextFile('/tmp/ap-pwned.txt', 'hi')`), PERMISSION_DENIED)
         })
